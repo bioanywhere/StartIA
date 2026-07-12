@@ -457,6 +457,59 @@ function parseCsvRecords(text) {
     });
 }
 
+// Parse a `.sql` dump produced by Export SQL: reads every
+// `INSERT INTO contacts (cols) VALUES (vals);` statement back into records.
+// Handles '' -escaped strings, NULL, numbers, and values spanning newlines.
+function parseSqlValues(text, start) {
+  let i = start;
+  while (i < text.length && /\s/.test(text[i])) i++;
+  if (text[i] !== "(") return null;
+  i++;
+  const values = [];
+  while (i < text.length) {
+    while (i < text.length && /[\s,]/.test(text[i])) i++;
+    if (text[i] === ")") return { values, end: i + 1 };
+    if (text[i] === "'") {
+      i++;
+      let s = "";
+      while (i < text.length) {
+        if (text[i] === "'") {
+          if (text[i + 1] === "'") { s += "'"; i += 2; continue; }
+          i++;
+          break;
+        }
+        s += text[i++];
+      }
+      values.push(s);
+    } else {
+      let tok = "";
+      while (i < text.length && !/[,)]/.test(text[i])) tok += text[i++];
+      tok = tok.trim();
+      values.push(/^null$/i.test(tok) ? "" : tok);
+    }
+  }
+  return null; // unterminated
+}
+
+function parseSqlRecords(text) {
+  const records = [];
+  const re = /INSERT\s+INTO\s+contacts\s*\(([^)]*)\)\s*VALUES\s*/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    const cols = m[1].split(",").map((s) => s.trim().replace(/^["'`]|["'`]$/g, ""));
+    const parsed = parseSqlValues(text, re.lastIndex);
+    if (!parsed || parsed.values.length !== cols.length) continue;
+    re.lastIndex = parsed.end;
+    const rec = {};
+    cols.forEach((c, idx) => {
+      rec[c] = parsed.values[idx];
+    });
+    if ("is_decision_maker" in rec) rec.is_decision_maker = /^(1|true|yes)$/i.test(String(rec.is_decision_maker));
+    records.push(rec);
+  }
+  return records;
+}
+
 async function doRestore(records, replace) {
   const start = await send("RESTORE_START", { replace });
   if (!start || !start.ok) {
@@ -481,8 +534,11 @@ async function onRestoreFile(e) {
   if (!file) return;
   try {
     const text = await file.text();
-    const records = file.name.toLowerCase().endsWith(".csv")
+    const lower = file.name.toLowerCase();
+    const records = lower.endsWith(".csv")
       ? parseCsvRecords(text)
+      : lower.endsWith(".sql")
+      ? parseSqlRecords(text)
       : parseJsonRecords(text);
     if (!records.length) {
       setRestore("No records found in that file.", "warn");
