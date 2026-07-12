@@ -295,7 +295,7 @@ button.danger:hover:not(:disabled) { background: #3a1a1a; }
 
 .export {
   display: grid;
-  grid-template-columns: 1fr 1fr auto;
+  grid-template-columns: 1fr 1fr 1fr auto;
   gap: 6px;
 }
 

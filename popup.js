@@ -14,6 +14,7 @@ const els = {
   stop: $("btn-stop"),
   csv: $("btn-csv"),
   json: $("btn-json"),
+  sql: $("btn-sql"),
   reset: $("btn-reset"),
   restore: $("btn-restore"),
   restoreFile: $("restore-file"),
@@ -347,6 +348,29 @@ function toCsv(rows) {
   return header + "\n" + body;
 }
 
+// Build a portable SQL dump: CREATE TABLE + INSERTs. Runs in SQLite, and (aside
+// from the table name quoting) in most SQL databases.
+function toSql(rows) {
+  const cols = CSV_COLUMNS.map(([key]) => key);
+  const sqlStr = (v) => {
+    if (v === null || v === undefined || v === "") return "NULL";
+    return "'" + String(v).replace(/'/g, "''") + "'";
+  };
+  let out = "-- StartIA → LinkedIn export\n";
+  out += "-- Generated: " + new Date().toISOString() + "\n\n";
+  out +=
+    "CREATE TABLE IF NOT EXISTS contacts (\n" +
+    cols.map((c) => "  " + c + (c === "is_decision_maker" ? " INTEGER" : " TEXT")).join(",\n") +
+    "\n);\n\n";
+  out += "BEGIN TRANSACTION;\n";
+  for (const r of rows) {
+    const vals = cols.map((c) => (c === "is_decision_maker" ? (r[c] ? 1 : 0) : sqlStr(r[c])));
+    out += `INSERT INTO contacts (${cols.join(", ")}) VALUES (${vals.join(", ")});\n`;
+  }
+  out += "COMMIT;\n";
+  return out;
+}
+
 function download(filename, text, mime) {
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -368,6 +392,8 @@ async function exportData(format) {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   if (format === "csv") {
     download(`startia-linkedin-${stamp}.csv`, toCsv(results), "text/csv;charset=utf-8");
+  } else if (format === "sql") {
+    download(`startia-linkedin-${stamp}.sql`, toSql(results), "application/sql;charset=utf-8");
   } else {
     const payload = { exported_at: new Date().toISOString(), summary: stats, records: results };
     download(`startia-linkedin-${stamp}.json`, JSON.stringify(payload, null, 2), "application/json");
@@ -510,6 +536,7 @@ els.resume.addEventListener("click", () => send("RESUME"));
 els.stop.addEventListener("click", () => send("STOP"));
 els.csv.addEventListener("click", () => exportData("csv"));
 els.json.addEventListener("click", () => exportData("json"));
+els.sql.addEventListener("click", () => exportData("sql"));
 els.restore.addEventListener("click", () => els.restoreFile.click());
 els.restoreFile.addEventListener("change", onRestoreFile);
 els.reset.addEventListener("click", async () => {
