@@ -108,6 +108,18 @@ function publicState() {
     currentOrg: state.currentOrg,
     stats: state.stats,
     plan: state.plan,
+    // The per-org pending list is derived from the actual work queue (the single
+    // source of truth) and rides along only while a plan is awaiting
+    // confirmation — so it can never be stale or lost to a separate request.
+    planItems:
+      state.status === "planned"
+        ? (state.workQueue || []).map((o) => ({
+            id: orgIdentity(o),
+            name: o.name,
+            category: o.categoryLabel,
+            reason: o.__reason || "incomplete",
+          }))
+        : null,
     resultCount: state.datasetCount || 0,
     logTail: state.log.slice(-40),
   };
@@ -236,17 +248,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({ ok: true });
         break;
 
-      case "GET_PLAN_ITEMS":
-        sendResponse({ items: state.planItems || [] });
-        break;
-
       case "CANCEL_PLAN":
         if (state.status === "planned" || state.status === "enumerating") {
           controlSignal = "stop";
           state.status = state.datasetCount ? "done" : "idle";
           state.plan = null;
           state.workQueue = [];
-          state.planItems = [];
           log("info", "Plan cancelled. No data changed.");
           pushState({ immediate: true });
         }
@@ -462,7 +469,6 @@ async function buildPlan(reprocessAll) {
   };
   const queue = [];
   const queuedIds = new Set();
-  const items = []; // lightweight per-org descriptors for the popup's picker
 
   for (const org of state.workMaster) {
     const id = orgIdentity(org);
@@ -473,9 +479,11 @@ async function buildPlan(reprocessAll) {
       counts.willSkip++;
       continue;
     }
+    // Tag the queued org with its reason so the popup's picker (derived from the
+    // work queue in publicState) and the "updated" count can use it directly.
+    org.__reason = reason === undefined ? "new" : reason;
     queue.push(org);
     queuedIds.add(id);
-    items.push({ id, name: org.name, category: org.categoryLabel, reason: reason === undefined ? "new" : reason });
 
     if (reprocessAll) continue;
     if (reason === undefined) counts.newOrgs++;
@@ -486,7 +494,6 @@ async function buildPlan(reprocessAll) {
   }
 
   state.workQueue = queue;
-  state.planItems = items;
 
   return {
     mode: state.mode,
@@ -547,12 +554,8 @@ async function confirmAndRun(selectedIds) {
     }
     mirrorDeleteOrgs(queueIds).catch(() => {});
     // "updated" = pending orgs in this run that already had saved rows (i.e. not
-    // brand new), computed from the selected subset.
-    const reasonById = new Map((state.planItems || []).map((it) => [it.id, it.reason]));
-    state.stats.updated = state.workQueue.filter((o) => {
-      const r = reasonById.get(orgIdentity(o));
-      return r && r !== "new";
-    }).length;
+    // brand new), from the reason tagged on each queued org.
+    state.stats.updated = state.workQueue.filter((o) => o.__reason && o.__reason !== "new").length;
     await rebuildSeenContacts();
     log(
       "info",

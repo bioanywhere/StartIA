@@ -168,8 +168,21 @@ function renderPlan(state, status, mode) {
     els.confirm.disabled = true;
     els.confirm.textContent = "✓ Confirm";
   } else if (incremental) {
-    if (!planLoaded) loadPlanItems();
-    else updateConfirmButton();
+    // Items are delivered inside the broadcast state (state.planItems) while
+    // status is "planned" — no separate request, so nothing to race/lose.
+    const items = state.planItems || [];
+    const expected = state.plan ? state.plan.toProcess || 0 : 0;
+    if (!planLoaded && (items.length || expected === 0)) {
+      planItems = items;
+      selectedIds = new Set(items.map((i) => i.id));
+      filterCat = "all";
+      filterIssue = "all";
+      planLoaded = true;
+      buildFilterChips();
+      renderSelect();
+    } else if (planLoaded) {
+      updateConfirmButton();
+    }
   } else {
     els.confirm.disabled = false;
     els.confirm.textContent = "✓ Confirm and reprocess ALL records";
@@ -187,18 +200,6 @@ function renderPlan(state, status, mode) {
     els.pIncomplete.textContent = p.incomplete || 0;
     els.pTotal.textContent = p.toProcess || 0;
   }
-}
-
-// Fetch the per-org pending list once the plan is ready; select all by default.
-async function loadPlanItems() {
-  planLoaded = true; // set before await so we don't double-load on re-render
-  const r = await send("GET_PLAN_ITEMS");
-  planItems = (r && r.items) || [];
-  selectedIds = new Set(planItems.map((i) => i.id));
-  filterCat = "all";
-  filterIssue = "all";
-  buildFilterChips();
-  renderSelect();
 }
 
 function buildFilterChips() {
