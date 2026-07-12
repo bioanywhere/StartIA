@@ -172,16 +172,22 @@ function renderPlan(state, status, mode) {
     // status is "planned" — no separate request, so nothing to race/lose.
     const items = state.planItems || [];
     const expected = state.plan ? state.plan.toProcess || 0 : 0;
-    if (!planLoaded && (items.length || expected === 0)) {
-      planItems = items;
-      selectedIds = new Set(items.map((i) => i.id));
-      filterCat = "all";
-      filterIssue = "all";
-      planLoaded = true;
-      buildFilterChips();
-      renderSelect();
-    } else if (planLoaded) {
-      updateConfirmButton();
+    if (items.length || expected === 0) {
+      if (!planLoaded) {
+        planItems = items;
+        selectedIds = new Set(items.map((i) => i.id));
+        filterCat = "all";
+        filterIssue = "all";
+        planLoaded = true;
+        buildFilterChips();
+        renderSelect();
+      } else {
+        updateConfirmButton();
+      }
+    } else {
+      // Picker couldn't populate though the plan says there's work to do.
+      // Tell the user exactly why, using the background version stamp.
+      showPickerProblem(state, expected);
     }
   } else {
     els.confirm.disabled = false;
@@ -200,6 +206,32 @@ function renderPlan(state, status, mode) {
     els.pIncomplete.textContent = p.incomplete || 0;
     els.pTotal.textContent = p.toProcess || 0;
   }
+}
+
+// Shown when status is "planned" and there is work to do, but the picker list
+// arrived empty. Distinguishes a stale background from an empty work queue.
+function showPickerProblem(state, expected) {
+  planLoaded = false;
+  els.filterCategory.innerHTML = "";
+  els.filterIssue.innerHTML = "";
+  els.selCount.textContent = "";
+  els.confirm.disabled = true;
+  els.confirm.textContent = "✓ Confirm and process pending records";
+  els.planList.innerHTML = "";
+  const d = document.createElement("div");
+  d.className = "plan-empty";
+  if (typeof state.bgVersion === "undefined") {
+    d.innerHTML =
+      `The extension's background is running an <b>older version</b>, so it can't ` +
+      `send the ${expected} pending records to this picker.<br><br>` +
+      `Fix: open <b>chrome://extensions</b>, click the <b>⟳ reload</b> icon on this ` +
+      `extension, then reopen this popup.`;
+  } else {
+    d.innerHTML =
+      `The work queue is empty even though ${expected} records are pending — the ` +
+      `saved plan is stale.<br><br>Fix: click <b>Cancel</b>, then <b>Start</b> again to rebuild it.`;
+  }
+  els.planList.appendChild(d);
 }
 
 function buildFilterChips() {

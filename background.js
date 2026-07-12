@@ -99,6 +99,10 @@ function pushState({ immediate = false } = {}) {
 
 function publicState() {
   return {
+    // Bumped when the plan/picker delivery changes, so the popup can tell
+    // whether the running service worker has this code (vs. a stale one that
+    // needs an extension reload).
+    bgVersion: "picker-wq-1",
     status: state.status,
     mode: state.mode,
     startedAt: state.startedAt,
