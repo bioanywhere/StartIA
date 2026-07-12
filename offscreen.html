@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>StartIA SQLite mirror</title>
+  </head>
+  <body>
+    <!-- Invisible host document. Its only job is to run the SQLite worker,
+         which the MV3 service worker cannot do itself (no Workers / no OPFS). -->
+    <script src="offscreen.js" type="module"></script>
+  </body>
+</html>

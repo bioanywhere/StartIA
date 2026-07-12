@@ -1,0 +1,18 @@
+# SQLite databases / exports (user data, not source)
+*.db
+*.sqlite
+startia.db
+
+# Backups / exports produced by the extension
+startia-backup-*.json
+startia-linkedin-*.csv
+startia-linkedin-*.json
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# Dependencies (none currently, but just in case)
+node_modules/

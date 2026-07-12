@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StartIA → LinkedIn Extractor</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <h1>StartIA → LinkedIn Extractor</h1>
+      <span id="status-badge" class="badge idle">idle</span>
+    </header>
+
+    <!-- Idle controls -->
+    <section id="start-controls" class="controls">
+      <button id="btn-start" class="primary">▶ Start Extraction</button>
+      <button id="btn-reprocess" class="ghost danger">⟳ Reprocess all records</button>
+    </section>
+
+    <!-- Run controls (visible while running / paused) -->
+    <section id="run-controls" class="controls hidden">
+      <button id="btn-pause" disabled>⏸ Pause</button>
+      <button id="btn-resume" disabled>⏵ Resume</button>
+      <button id="btn-stop" disabled>⏹ Stop</button>
+    </section>
+
+    <!-- Pre-start analysis / confirmation panel -->
+    <section id="plan-panel" class="plan hidden">
+      <div class="plan-head">
+        <span id="plan-title">Analyzing saved data…</span>
+      </div>
+      <div id="plan-analyzing" class="plan-analyzing">
+        <span class="spinner"></span>
+        <span id="plan-progress">Enumerating StartIA tabs…</span>
+      </div>
+      <div id="plan-grid" class="plan-grid hidden">
+        <div class="plan-row existing"><span>Existing organizations</span><b id="p-existing-orgs">0</b></div>
+        <div class="plan-row existing"><span>Existing contacts</span><b id="p-existing-contacts">0</b></div>
+        <div class="plan-row skip"><span>Completed — will skip</span><b id="p-skip">0</b></div>
+        <div class="plan-sep">To process this run</div>
+        <div class="plan-row proc"><span>New companies</span><b id="p-new">0</b></div>
+        <div class="plan-row proc"><span>Missing LinkedIn URL</span><b id="p-nolink">0</b></div>
+        <div class="plan-row proc"><span>Previous errors</span><b id="p-errors">0</b></div>
+        <div class="plan-row proc"><span>Blocked by auth wall</span><b id="p-authwall">0</b></div>
+        <div class="plan-row proc"><span>Incomplete — retry</span><b id="p-incomplete">0</b></div>
+        <div class="plan-row total"><span>Total to process</span><b id="p-total">0</b></div>
+      </div>
+
+      <div id="plan-select" class="plan-select hidden">
+        <div class="plan-select-title">Choose which pending records to try</div>
+        <div class="filter-row" id="filter-category"></div>
+        <div class="filter-row" id="filter-issue"></div>
+        <div class="plan-select-head">
+          <div class="sel-btns">
+            <button id="sel-all-btn" class="mini">All</button>
+            <button id="sel-none-btn" class="mini">None</button>
+            <button id="sel-shown-btn" class="mini">Only shown</button>
+          </div>
+          <span id="sel-count">0 selected</span>
+        </div>
+        <div id="plan-list" class="plan-list"></div>
+      </div>
+
+      <div class="plan-actions">
+        <button id="btn-confirm" class="primary" disabled>✓ Confirm and process pending records</button>
+        <button id="btn-cancel" class="ghost">Cancel</button>
+      </div>
+    </section>
+
+    <section class="progress">
+      <div class="bar-wrap"><div id="bar" class="bar"></div></div>
+      <div class="progress-text"><span id="progress-label">Not started</span></div>
+    </section>
+
+    <section class="current">
+      <div><span class="k">Tab</span><span id="cur-tab" class="v">—</span></div>
+      <div><span class="k">Page</span><span id="cur-page" class="v">—</span></div>
+      <div><span class="k">Organization</span><span id="cur-org" class="v">—</span></div>
+    </section>
+
+    <section class="stats">
+      <div class="stat"><b id="s-orgs">0</b><span>Processed</span></div>
+      <div class="stat"><b id="s-skipped">0</b><span>Skipped</span></div>
+      <div class="stat"><b id="s-contacts">0</b><span>Contacts</span></div>
+      <div class="stat"><b id="s-dupes">0</b><span>Duplicates</span></div>
+      <div class="stat"><b id="s-errors">0</b><span>Errors</span></div>
+    </section>
+
+    <section class="export">
+      <button id="btn-csv">⬇ Export CSV</button>
+      <button id="btn-json">⬇ Export JSON</button>
+      <button id="btn-reset" class="ghost">Reset</button>
+    </section>
+
+    <section class="restore">
+      <button id="btn-restore">↺ Restore from backup…</button>
+      <input id="restore-file" type="file" accept=".json,.csv,application/json,text/csv" hidden />
+      <div id="restore-status" class="restore-status">
+        Reset &amp; Reprocess auto-save a backup first. Restore loads records back from a JSON/CSV file.
+      </div>
+    </section>
+
+    <section class="log-wrap">
+      <div class="log-head">Activity log</div>
+      <div id="log" class="log"></div>
+    </section>
+
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

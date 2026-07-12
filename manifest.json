@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "StartIA → LinkedIn Contact Extractor",
+  "version": "1.0.0",
+  "description": "Extracts LinkedIn profile URLs and contact names for every organization in the StartIA ecosystem directory (startups, investors, actors, labs).",
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "scripting",
+    "alarms",
+    "offscreen",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://startia.com.co/*",
+    "https://www.linkedin.com/*",
+    "https://linkedin.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "StartIA → LinkedIn Extractor"
+  }
+}
