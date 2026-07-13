@@ -60,10 +60,30 @@
             <span id="m-count" class="muted"></span>
           </div>
 
+          <div id="bulk-bar" class="bulk-bar hidden">
+            <span id="bulk-count">0 selected</span>
+            <button id="bulk-enrich" class="mini">✨ Enrich</button>
+            <button id="bulk-queue" class="mini">＋ Queue</button>
+            <span class="sep">·</span>
+            <select id="bulk-channel" class="mini">
+              <option value="connect">Connect note</option>
+              <option value="message" selected>Message</option>
+              <option value="inmail">InMail</option>
+            </select>
+            <button id="bulk-outreach" class="mini primary">▶ Start outreach</button>
+            <span class="sep">·</span>
+            <button id="bulk-csv" class="mini ghost">⬇ CSV</button>
+            <button id="bulk-json" class="mini ghost">⬇ JSON</button>
+            <button id="bulk-sql" class="mini ghost">⬇ SQL</button>
+            <span class="grow"></span>
+            <button id="bulk-clear" class="mini ghost">Clear</button>
+          </div>
+
           <div class="table-wrap">
             <table id="m-table">
               <thead>
                 <tr>
+                  <th class="sel"><input type="checkbox" id="m-selall" title="Select all shown" /></th>
                   <th></th>
                   <th>Name</th>
                   <th>Title / Headline</th>
@@ -114,6 +134,7 @@
         <textarea id="modal-message" rows="5"></textarea>
         <div class="modal-actions">
           <button id="modal-cancel" class="ghost">Cancel</button>
+          <button id="modal-skip" class="ghost hidden">Skip →</button>
           <button id="modal-confirm" class="primary">Confirm</button>
         </div>
       </div>

@@ -1,5 +1,6 @@
 // StartIA full-page app: Extraction summary + LinkedIn Marketing manager.
 import { toCsv, toSql, toJson } from "./lib/export.js";
+import { normalizeUrl } from "./lib/normalize.js";
 
 const $ = (id) => document.getElementById(id);
 const send = (type, extra = {}) => chrome.runtime.sendMessage({ type, ...extra }).catch(() => ({}));
@@ -65,6 +66,9 @@ $("x-sql").addEventListener("click", () => exportData("sql"));
 // ---- Marketing: data + rendering -----------------------------------------
 
 let contacts = [];
+let visibleCache = []; // last-rendered filtered rows (for range-select + bulk)
+const selected = new Set(); // selected profile URLs (survives filtering)
+let lastIndex = null; // anchor row index for shift-click range
 const STATUS_LABEL = {
   none: "Not contacted",
   queued: "Queued",
@@ -109,13 +113,16 @@ function visibleContacts() {
 
 function renderTable() {
   const rows = visibleContacts();
+  visibleCache = rows;
   $("m-count").textContent = `${rows.length} of ${contacts.length}`;
   const body = $("m-body");
   body.innerHTML = "";
-  for (const c of rows) body.appendChild(rowEl(c));
+  rows.forEach((c, i) => body.appendChild(rowEl(c, i)));
+  updateBulkBar();
+  syncSelectAll();
 }
 
-function rowEl(c) {
+function rowEl(c, index) {
   const tr = document.createElement("tr");
   const enrichedBadge =
     c.enrich_status === "ok"
@@ -125,6 +132,7 @@ function rowEl(c) {
       : `<span class="badge">—</span>`;
   const st = c.outreach_status || "none";
   tr.innerHTML = `
+    <td class="sel"></td>
     <td><a href="${esc(c.url)}" target="_blank" rel="noopener">↗</a></td>
     <td>${esc(c.name || "—")}</td>
     <td title="${esc(c.headline || "")}">${esc(c.title || c.headline || "—")}</td>
@@ -134,15 +142,161 @@ function rowEl(c) {
     <td>${enrichedBadge}</td>
     <td><span class="badge ${st}">${esc(STATUS_LABEL[st] || st)}</span></td>
     <td class="cell-actions"></td>`;
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = selected.has(c.url);
+  cb.addEventListener("click", (e) => onRowCheck(e, index));
+  tr.querySelector("td.sel").appendChild(cb);
   const actions = tr.querySelector(".cell-actions");
   actions.append(
     btn("Open", "ghost", () => chrome.tabs.create({ url: c.url })),
     btn(c.enrich_status === "ok" ? "Re-enrich" : "Enrich", "ghost", () => enrich(c, tr)),
-    btn("Connect", "", () => outreach(c, "connect")),
-    btn("Message", "", () => outreach(c, "message")),
-    btn("InMail", "", () => outreach(c, "inmail"))
+    btn("Connect", "", () => openOutreachModal(c, "connect", null)),
+    btn("Message", "", () => openOutreachModal(c, "message", null)),
+    btn("InMail", "", () => openOutreachModal(c, "inmail", null))
   );
   return tr;
+}
+
+// ---- Selection (single / range / all-filtered) ----------------------------
+
+function onRowCheck(e, index) {
+  const checked = e.target.checked;
+  if (e.shiftKey && lastIndex !== null) {
+    const [a, b] = [Math.min(lastIndex, index), Math.max(lastIndex, index)];
+    for (let i = a; i <= b; i++) {
+      const u = visibleCache[i].url;
+      if (checked) selected.add(u);
+      else selected.delete(u);
+    }
+    renderTable(); // reflect the whole range
+  } else {
+    const u = visibleCache[index].url;
+    if (checked) selected.add(u);
+    else selected.delete(u);
+    updateBulkBar();
+    syncSelectAll();
+  }
+  lastIndex = index;
+}
+
+function syncSelectAll() {
+  const cb = $("m-selall");
+  const shown = visibleCache.length;
+  const sel = visibleCache.filter((c) => selected.has(c.url)).length;
+  cb.checked = shown > 0 && sel === shown;
+  cb.indeterminate = sel > 0 && sel < shown;
+}
+
+function updateBulkBar() {
+  const n = selected.size;
+  $("bulk-bar").classList.toggle("hidden", n === 0);
+  $("bulk-count").textContent = `${n} selected`;
+}
+
+function selectedContacts() {
+  return contacts.filter((c) => selected.has(c.url));
+}
+
+$("m-selall").addEventListener("change", (e) => {
+  if (e.target.checked) visibleCache.forEach((c) => selected.add(c.url));
+  else visibleCache.forEach((c) => selected.delete(c.url));
+  renderTable();
+});
+$("bulk-clear").addEventListener("click", () => {
+  selected.clear();
+  lastIndex = null;
+  renderTable();
+});
+
+// ---- Bulk actions ---------------------------------------------------------
+
+$("bulk-queue").addEventListener("click", async () => {
+  const list = selectedContacts();
+  if (!list.length) return;
+  let n = 0;
+  for (const c of list) {
+    const res = await send("SET_OUTREACH", { url: c.url, patch: { status: "queued", channel: "" } });
+    if (res && res.ok) {
+      c.outreach_status = "queued";
+      c.outreach_at = res.outreach.at;
+      n++;
+    }
+  }
+  renderTable();
+  toast(`Queued ${n} contact(s).`);
+});
+
+$("bulk-enrich").addEventListener("click", async () => {
+  const list = selectedContacts();
+  if (!list.length) return;
+  if (!confirm(`Enrich ${list.length} contact(s)? This opens their LinkedIn profiles one at a time in the background.`)) return;
+  let done = 0;
+  for (const c of list) {
+    toast(`Enriching ${++done}/${list.length}: ${c.name}…`);
+    const res = await send("ENRICH_CONTACT", { url: c.url });
+    if (res && res.ok) {
+      Object.assign(c, {
+        enrich_status: "ok",
+        headline: res.enrichment.headline,
+        current_company: res.enrichment.current_company,
+        current_title: res.enrichment.current_title,
+        location: res.enrichment.location || c.location,
+        experience_count: (res.enrichment.experience || []).length,
+      });
+    } else {
+      c.enrich_status = (res && res.reason) || "failed";
+    }
+    renderTable();
+  }
+  toast(`Enrichment finished for ${list.length} contact(s).`);
+});
+
+$("bulk-csv").addEventListener("click", () => exportSelected("csv"));
+$("bulk-json").addEventListener("click", () => exportSelected("json"));
+$("bulk-sql").addEventListener("click", () => exportSelected("sql"));
+
+async function exportSelected(format) {
+  const urls = new Set(selected);
+  if (!urls.size) return;
+  const { results } = await send("GET_RESULTS");
+  const rows = (results || []).filter((r) => urls.has(normalizeUrl(r.contact_linkedin_url || "")));
+  if (!rows.length) return toast("No underlying records for the selected people.");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  if (format === "csv") download(`startia-selected-${stamp}.csv`, toCsv(rows), "text/csv;charset=utf-8");
+  else if (format === "sql") download(`startia-selected-${stamp}.sql`, toSql(rows), "application/sql;charset=utf-8");
+  else download(`startia-selected-${stamp}.json`, toJson(rows), "application/json");
+  toast(`Exported ${rows.length} record(s) for ${urls.size} selected person(s).`);
+}
+
+// ---- Guided outreach queue ------------------------------------------------
+
+let outreachQueue = null; // { list, i, channel }
+$("bulk-outreach").addEventListener("click", () => {
+  const list = selectedContacts();
+  if (!list.length) return;
+  const channel = $("bulk-channel").value;
+  if (!confirm(`Start guided outreach for ${list.length} contact(s) via ${channel}? You'll review and send each one on LinkedIn yourself.`)) return;
+  outreachQueue = { list, i: 0, channel };
+  nextQueueStep();
+});
+function nextQueueStep() {
+  if (!outreachQueue || outreachQueue.i >= outreachQueue.list.length) {
+    const total = outreachQueue ? outreachQueue.list.length : 0;
+    outreachQueue = null;
+    if (total) toast(`Outreach queue finished (${total}).`);
+    return;
+  }
+  const c = outreachQueue.list[outreachQueue.i];
+  openOutreachModal(c, outreachQueue.channel, {
+    advance: () => {
+      outreachQueue.i++;
+      nextQueueStep();
+    },
+    abort: () => {
+      outreachQueue = null;
+    },
+  });
 }
 function btn(label, cls, onClick) {
   const b = document.createElement("button");
@@ -250,7 +404,9 @@ function renderTemplate(body, c) {
 
 const CHANNEL_SENT = { connect: "connect_sent", message: "message_sent", inmail: "inmail_sent" };
 
-async function outreach(c, channel) {
+// queueCtx: null for a single row action, or { advance, abort } when driven by
+// the guided outreach queue (adds a Skip button and chains to the next contact).
+function openOutreachModal(c, channel, queueCtx) {
   const tpl = templates.find((t) => t.channel === channel) || templates[0];
   const message = tpl ? renderTemplate(tpl.body, c) : "";
   const already = ["connect_sent", "message_sent", "inmail_sent", "replied"].includes(c.outreach_status);
@@ -258,17 +414,18 @@ async function outreach(c, channel) {
     ? `Already marked "${STATUS_LABEL[c.outreach_status]}"${c.outreach_at ? " on " + new Date(c.outreach_at).toLocaleString() : ""}. Reaching out again?`
     : "";
   const label = channel === "connect" ? "connection note" : channel === "inmail" ? "InMail" : "message";
+  const pos = queueCtx ? ` (${outreachQueue.i + 1} of ${outreachQueue.list.length})` : "";
   openModal({
-    title: `${c.name} — ${label}`,
+    title: `${c.name} — ${label}${pos}`,
     warn,
-    body: `The ${label} below will be copied to your clipboard and ${c.name}'s LinkedIn profile will open. Review, paste, and send it yourself, then it's marked as sent.`,
+    body: `The ${label} below will be copied to your clipboard and ${c.name}'s LinkedIn profile will open. Review, paste, and send it yourself; it's then marked as sent.`,
     message,
     confirmText: already ? "Send again anyway" : "Copy & open LinkedIn",
     onConfirm: async (finalMessage) => {
       try {
         await navigator.clipboard.writeText(finalMessage);
       } catch {
-        /* clipboard may be blocked; message still shown */
+        /* clipboard may be blocked; message still visible to copy */
       }
       chrome.tabs.create({ url: c.url });
       const res = await send("SET_OUTREACH", {
@@ -281,17 +438,20 @@ async function outreach(c, channel) {
         c.outreach_at = res.outreach.at;
         renderTable();
         toast(`${c.name}: copied ${label} & opened LinkedIn. Marked ${STATUS_LABEL[c.outreach_status]}.`);
-      } else if (res && res.duplicate) {
-        toast(`${c.name} already contacted — not changed.`);
       }
+      if (queueCtx) queueCtx.advance();
     },
+    onSkip: queueCtx ? () => queueCtx.advance() : null,
+    onCancel: queueCtx ? () => queueCtx.abort() : null,
   });
 }
 
 // ---- Modal + toast --------------------------------------------------------
 
 let modalConfirm = null;
-function openModal({ title, warn, body, message, confirmText, onConfirm }) {
+let modalSkip = null;
+let modalCancel = null;
+function openModal({ title, warn, body, message, confirmText, onConfirm, onSkip, onCancel }) {
   $("modal-title").textContent = title;
   const w = $("modal-warn");
   w.textContent = warn || "";
@@ -301,14 +461,26 @@ function openModal({ title, warn, body, message, confirmText, onConfirm }) {
   msg.value = message || "";
   msg.classList.toggle("hidden", message === undefined);
   $("modal-confirm").textContent = confirmText || "Confirm";
+  $("modal-skip").classList.toggle("hidden", !onSkip);
   modalConfirm = onConfirm;
+  modalSkip = onSkip || null;
+  modalCancel = onCancel || null;
   $("modal").classList.remove("hidden");
 }
 function closeModal() {
   $("modal").classList.add("hidden");
-  modalConfirm = null;
+  modalConfirm = modalSkip = modalCancel = null;
 }
-$("modal-cancel").addEventListener("click", closeModal);
+$("modal-cancel").addEventListener("click", () => {
+  const fn = modalCancel;
+  closeModal();
+  if (fn) fn();
+});
+$("modal-skip").addEventListener("click", () => {
+  const fn = modalSkip;
+  closeModal();
+  if (fn) fn();
+});
 $("modal-confirm").addEventListener("click", async () => {
   const fn = modalConfirm;
   const message = $("modal-message").value;

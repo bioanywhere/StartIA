@@ -93,12 +93,28 @@ textarea { width: 100%; resize: vertical; }
 .toolbar .grow { flex: 1; }
 #m-search { min-width: 240px; }
 
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 10px;
+}
+.bulk-bar #bulk-count { font-weight: 600; }
+.bulk-bar .sep { color: var(--muted); }
+.bulk-bar .grow { flex: 1; }
+
 .table-wrap {
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: auto;
   max-height: 60vh;
 }
+th.sel, td.sel { width: 34px; text-align: center; }
+td.sel input, th.sel input { cursor: pointer; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 thead th {
   position: sticky;
