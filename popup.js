@@ -174,7 +174,9 @@ function renderPlan(state, status, mode) {
     if (items.length || expected === 0) {
       if (!planLoaded) {
         planItems = items;
-        selectedIds = new Set(items.map((i) => i.id));
+        // Start empty so selections build up additively across filters (use
+        // "All shown" with the All/Any-issue filters to select everything).
+        selectedIds = new Set();
         filterCat = "all";
         filterIssue = "all";
         planLoaded = true;
@@ -628,12 +630,15 @@ els.confirm.addEventListener("click", () => {
 });
 els.cancel.addEventListener("click", () => send("CANCEL_PLAN"));
 els.selAllBtn.addEventListener("click", () => {
-  // Select everything in the CURRENT filtered view (not the whole dataset).
-  selectedIds = new Set(visibleItems().map((i) => i.id));
+  // Add every record in the CURRENT filtered view to the selection (additive,
+  // like ticking each visible checkbox) — previously-selected records are kept.
+  for (const it of visibleItems()) selectedIds.add(it.id);
   renderSelect();
 });
 els.selNoneBtn.addEventListener("click", () => {
-  selectedIds = new Set();
+  // Remove the currently shown records from the selection (leaves records
+  // selected under other filters untouched).
+  for (const it of visibleItems()) selectedIds.delete(it.id);
   renderSelect();
 });
 els.pause.addEventListener("click", () => send("PAUSE"));
