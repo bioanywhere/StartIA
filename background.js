@@ -708,12 +708,23 @@ async function processIndividual(org, cls) {
 
   const data = await scrapeInTab(canonical, extractIndividualProfile, []);
 
-  if (data && data.authWall) {
-    log("warn", `"${org.name}": profile not readable (LinkedIn login/auth wall). Saving the profile URL anyway.`);
+  // Only save a LinkedIn URL when the profile was actually read. If the page was
+  // an auth wall / 404 / captcha, leave the URL blank and record the reason.
+  if (!data || !data.ok) {
+    const reason = (data && data.reason) || "name_not_found";
+    log("warn", `"${org.name}": profile not captured (${reason}) — URL left blank. Attempted: ${canonical}`);
+    await recordRow(org, {
+      linkedin_source_type: "Individual",
+      contact_full_name: "",
+      contact_title: "",
+      contact_linkedin_url: "", // blank — we couldn't verify the profile
+      contact_location: "",
+      status: reason, // captcha | auth_wall | not_found | name_not_found
+      error: canonical, // the attempted URL, for reference
+    });
+    return;
   }
 
-  // Always save the canonical profile URL from StartIA — never the scraped
-  // tab's location (which may be a login/auth-wall redirect).
   const contactUrl = normalizeUrl(canonical);
   if (isDuplicateContact(contactUrl)) {
     state.stats.duplicates++;
@@ -722,23 +733,20 @@ async function processIndividual(org, cls) {
   }
   markContact(contactUrl);
 
-  const name = data?.name || "";
-  const title = data?.title || "";
+  const name = data.name;
+  const title = data.title || "";
   state.stats.contacts++;
   await recordRow(org, {
     linkedin_source_type: "Individual",
     contact_full_name: name,
     contact_title: title,
     contact_linkedin_url: contactUrl,
-    contact_location: data?.location || "",
+    contact_location: data.location || "",
     is_decision_maker: isDecisionMaker(title),
-    status: data && data.ok ? "ok" : "partial",
-    error: data && data.ok ? "" : data && data.authWall ? "auth_wall" : "name_not_found",
+    status: "ok",
+    error: "",
   });
-  log(
-    "success",
-    `Saved contact: ${name || "(name unavailable — URL saved)"}${title ? " — " + title : ""} [${contactUrl}]`
-  );
+  log("success", `Saved contact: ${name}${title ? " — " + title : ""} [${contactUrl}]`);
 }
 
 async function processCompany(org, cls) {
