@@ -235,21 +235,41 @@ function showPickerProblem(state, expected) {
 }
 
 function buildFilterChips() {
+  const inCat = (it) => filterCat === "all" || it.category === filterCat;
+  const inIssue = (it) => filterIssue === "all" || it.reason === filterIssue;
+
+  // Faceted counts: each axis counts within the OTHER axis's current selection.
+  //  - Category chip counts reflect the selected issue.
+  //  - Issue (status) chip counts reflect the selected category.
   const catCounts = {};
+  let catTotal = 0;
   const issueCounts = {};
+  let issueTotal = 0;
   for (const it of planItems) {
-    catCounts[it.category] = (catCounts[it.category] || 0) + 1;
-    issueCounts[it.reason] = (issueCounts[it.reason] || 0) + 1;
+    if (inIssue(it)) {
+      catCounts[it.category] = (catCounts[it.category] || 0) + 1;
+      catTotal++;
+    }
+    if (inCat(it)) {
+      issueCounts[it.reason] = (issueCounts[it.reason] || 0) + 1;
+      issueTotal++;
+    }
   }
+
   els.filterCategory.innerHTML = "";
-  els.filterCategory.appendChild(chipEl("All", "all", filterCat === "all", planItems.length, "cat"));
+  els.filterCategory.appendChild(chipEl("All", "all", filterCat === "all", catTotal, "cat"));
   for (const c of CATEGORY_ORDER) {
-    if (catCounts[c]) els.filterCategory.appendChild(chipEl(c, c, filterCat === c, catCounts[c], "cat"));
+    // Keep a chip if it has a count OR is the current selection (so it never
+    // vanishes under you).
+    if (catCounts[c] || filterCat === c)
+      els.filterCategory.appendChild(chipEl(c, c, filterCat === c, catCounts[c] || 0, "cat"));
   }
+
   els.filterIssue.innerHTML = "";
-  els.filterIssue.appendChild(chipEl("Any issue", "all", filterIssue === "all", planItems.length, "issue"));
+  els.filterIssue.appendChild(chipEl("Any issue", "all", filterIssue === "all", issueTotal, "issue"));
   for (const k of ISSUE_ORDER) {
-    if (issueCounts[k]) els.filterIssue.appendChild(chipEl(ISSUE_LABELS[k], k, filterIssue === k, issueCounts[k], "issue"));
+    if (issueCounts[k] || filterIssue === k)
+      els.filterIssue.appendChild(chipEl(ISSUE_LABELS[k], k, filterIssue === k, issueCounts[k] || 0, "issue"));
   }
 }
 
