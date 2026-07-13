@@ -28,6 +28,7 @@ import {
   extractIndividualProfile,
   extractCompanyPeople,
 } from "./lib/linkedin-extractors.js";
+import { extractProfileFull } from "./lib/enrich-extractor.js";
 import {
   rowId,
   putRows,
@@ -36,13 +37,23 @@ import {
   clearAll as idbClear,
   count as idbCount,
   distinctContactUrls,
+  putEnrichment,
+  getEnrichment,
+  allEnrichment,
+  clearEnrichment,
+  putOutreach,
+  getOutreach,
+  allOutreach,
+  clearOutreach,
 } from "./lib/idb.js";
 import {
   mirrorInit,
   mirrorUpsert,
   mirrorDeleteOrgs,
   mirrorClear,
+  mirrorUpdateByUrl,
 } from "./lib/sqlite-bridge.js";
+import { mergeRecord } from "./lib/export.js";
 
 // ---------------------------------------------------------------------------
 // Runtime state (in-memory) + guards
@@ -293,11 +304,46 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       case "GET_RESULTS":
         try {
-          const results = await allRows();
+          const results = await mergedRecords();
           sendResponse({ results, stats: state.stats });
         } catch (e) {
           sendResponse({ results: [], stats: state.stats, error: String(e.message || e) });
         }
+        break;
+
+      case "GET_MARKETING_CONTACTS":
+        try {
+          sendResponse({ contacts: await marketingContacts() });
+        } catch (e) {
+          sendResponse({ contacts: [], error: String(e.message || e) });
+        }
+        break;
+
+      case "ENRICH_CONTACT":
+        try {
+          sendResponse(await enrichContact(msg.url));
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e.message || e) });
+        }
+        break;
+
+      case "SET_OUTREACH":
+        try {
+          sendResponse(await setOutreach(msg.url, msg.patch, !!msg.force));
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e.message || e) });
+        }
+        break;
+
+      case "GET_TEMPLATES": {
+        const obj = await chrome.storage.local.get("startia_templates");
+        sendResponse({ templates: obj.startia_templates || null });
+        break;
+      }
+
+      case "SET_TEMPLATES":
+        await chrome.storage.local.set({ startia_templates: msg.templates || [] });
+        sendResponse({ ok: true });
         break;
 
       case "RESET": {
@@ -313,6 +359,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         await clearState();
         try {
           await idbClear();
+          await clearEnrichment();
+          await clearOutreach();
         } catch {
           /* ignore */
         }
@@ -923,4 +971,141 @@ function reportMirror(res) {
     mirrorWarned = true;
     log("warn", "SQLite mirror write failed — records are still safe in IndexedDB. (" + res.error + ")");
   }
+}
+
+// ---------------------------------------------------------------------------
+// LinkedIn Marketing / enrichment
+// ---------------------------------------------------------------------------
+
+// All contact records with person-keyed enrichment + outreach merged in by URL.
+async function mergedRecords() {
+  const [rows, enrichMap, outreachMap] = await Promise.all([
+    allRows(),
+    idbMap(allEnrichment),
+    idbMap(allOutreach),
+  ]);
+  return rows.map((r) => {
+    const url = normalizeUrl(r.contact_linkedin_url || "");
+    return mergeRecord(r, url ? enrichMap.get(url) : null, url ? outreachMap.get(url) : null);
+  });
+}
+
+async function idbMap(getAllFn) {
+  const rows = await getAllFn();
+  const m = new Map();
+  for (const r of rows) if (r && r.url) m.set(r.url, r);
+  return m;
+}
+
+// One entry per unique person (individual profile URL) for the marketing table.
+async function marketingContacts() {
+  const [rows, enrichMap, outreachMap] = await Promise.all([
+    allRows(),
+    idbMap(allEnrichment),
+    idbMap(allOutreach),
+  ]);
+  const byUrl = new Map();
+  for (const r of rows) {
+    const url = normalizeUrl(r.contact_linkedin_url || "");
+    if (!url || classifyLinkedin(url).type !== "individual") continue; // only real people
+    if (!byUrl.has(url)) {
+      const e = enrichMap.get(url) || {};
+      const o = outreachMap.get(url) || {};
+      byUrl.set(url, {
+        url,
+        name: r.contact_full_name || e.name || "",
+        title: r.contact_title || e.current_title || "",
+        location: r.contact_location || e.location || "",
+        category: r.category || "",
+        org_name: r.org_name || "",
+        orgs: [r.org_name].filter(Boolean),
+        enrich_status: e.status || "",
+        enriched_at: e.enriched_at || "",
+        headline: e.headline || "",
+        current_company: e.current_company || "",
+        current_title: e.current_title || "",
+        experience_count: Array.isArray(e.experience) ? e.experience.length : 0,
+        outreach_status: o.status || "none",
+        outreach_channel: o.channel || "",
+        outreach_at: o.at || "",
+      });
+    } else {
+      const c = byUrl.get(url);
+      if (r.org_name && !c.orgs.includes(r.org_name)) c.orgs.push(r.org_name);
+    }
+  }
+  return [...byUrl.values()];
+}
+
+// Open the profile, scrape the full profile, and store enrichment (IDB + SQLite).
+async function enrichContact(rawUrl) {
+  const url = normalizeUrl(rawUrl || "");
+  if (!url || classifyLinkedin(url).type !== "individual") {
+    return { ok: false, error: "not an individual profile URL" };
+  }
+  const data = await scrapeInTab(url, extractProfileFull, []);
+  if (!data || !data.ok) {
+    const reason = (data && data.reason) || "name_not_found";
+    const rec = { url, status: reason, enriched_at: new Date().toISOString() };
+    await putEnrichment(rec);
+    mirrorUpdateByUrl(url, sqlEnrichFields(rec)).catch(() => {});
+    return { ok: false, reason, enrichment: rec };
+  }
+  const rec = {
+    url,
+    status: "ok",
+    enriched_at: new Date().toISOString(),
+    name: data.name || "",
+    headline: data.headline || "",
+    about: data.about || "",
+    location: data.location || "",
+    current_company: data.current_company || "",
+    current_title: data.current_title || "",
+    photo_url: data.photo_url || "",
+    connections: data.connections || "",
+    experience: data.experience || [],
+    education: data.education || [],
+    skills: data.skills || [],
+  };
+  await putEnrichment(rec);
+  mirrorUpdateByUrl(url, sqlEnrichFields(rec)).catch(() => {});
+  return { ok: true, enrichment: rec };
+}
+
+// Flatten enrichment into the SQLite contacts columns (arrays -> JSON strings).
+function sqlEnrichFields(rec) {
+  return {
+    enrich_status: rec.status || "",
+    enriched_at: rec.enriched_at || "",
+    enrich_headline: rec.headline || "",
+    enrich_about: rec.about || "",
+    enrich_location: rec.location || "",
+    enrich_current_company: rec.current_company || "",
+    enrich_current_title: rec.current_title || "",
+    enrich_connections: rec.connections || "",
+    enrich_photo_url: rec.photo_url || "",
+    experience: JSON.stringify(rec.experience || []),
+    education: JSON.stringify(rec.education || []),
+    skills: JSON.stringify(rec.skills || []),
+  };
+}
+
+// Update outreach status for a person. Prevents duplicate actions unless forced.
+async function setOutreach(rawUrl, patch, force) {
+  const url = normalizeUrl(rawUrl || "");
+  if (!url) return { ok: false, error: "missing url" };
+  const existing = (await getOutreach(url)) || { url, status: "none" };
+  const terminal = ["connect_sent", "message_sent", "inmail_sent", "replied"];
+  if (!force && patch && patch.status && terminal.includes(existing.status)) {
+    return { ok: false, duplicate: true, existing };
+  }
+  const rec = { ...existing, ...patch, url, at: new Date().toISOString() };
+  await putOutreach(rec);
+  mirrorUpdateByUrl(url, {
+    outreach_status: rec.status || "",
+    outreach_channel: rec.channel || "",
+    outreach_at: rec.at || "",
+    outreach_note: rec.note || "",
+  }).catch(() => {});
+  return { ok: true, outreach: rec };
 }

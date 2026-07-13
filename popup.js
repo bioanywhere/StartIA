@@ -1,6 +1,15 @@
 // Popup controller: sends commands to the background service worker and
 // renders the live state it broadcasts.
 
+import {
+  toCsv,
+  toSql,
+  toJson,
+  parseCsvRecords,
+  parseSqlRecords,
+  parseJsonRecords,
+} from "./lib/export.js";
+
 const $ = (id) => document.getElementById(id);
 
 const els = {
@@ -19,6 +28,7 @@ const els = {
   restore: $("btn-restore"),
   restoreFile: $("restore-file"),
   restoreStatus: $("restore-status"),
+  marketing: $("btn-marketing"),
 
   planPanel: $("plan-panel"),
   planTitle: $("plan-title"),
@@ -376,55 +386,6 @@ function escapeHtml(s) {
 
 // ---- Export -------------------------------------------------------------
 
-const CSV_COLUMNS = [
-  ["category", "StartIA Category"],
-  ["org_name", "Organization Name"],
-  ["org_detail_url", "StartIA Detail URL"],
-  ["linkedin_source_type", "LinkedIn Source Type"],
-  ["linkedin_company_url", "LinkedIn Company URL"],
-  ["contact_full_name", "Contact Full Name"],
-  ["contact_title", "Contact Title / Headline"],
-  ["contact_linkedin_url", "Contact LinkedIn URL"],
-  ["contact_location", "Contact Location"],
-  ["is_decision_maker", "Decision Maker"],
-  ["status", "Status"],
-  ["error", "Error Details"],
-  ["extracted_at", "Extracted At"],
-];
-
-function toCsv(rows) {
-  const esc = (v) => {
-    const s = v === null || v === undefined ? "" : String(v);
-    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-  };
-  const header = CSV_COLUMNS.map(([, label]) => esc(label)).join(",");
-  const body = rows.map((r) => CSV_COLUMNS.map(([key]) => esc(r[key])).join(",")).join("\n");
-  return header + "\n" + body;
-}
-
-// Build a portable SQL dump: CREATE TABLE + INSERTs. Runs in SQLite, and (aside
-// from the table name quoting) in most SQL databases.
-function toSql(rows) {
-  const cols = CSV_COLUMNS.map(([key]) => key);
-  const sqlStr = (v) => {
-    if (v === null || v === undefined || v === "") return "NULL";
-    return "'" + String(v).replace(/'/g, "''") + "'";
-  };
-  let out = "-- StartIA → LinkedIn export\n";
-  out += "-- Generated: " + new Date().toISOString() + "\n\n";
-  out +=
-    "CREATE TABLE IF NOT EXISTS contacts (\n" +
-    cols.map((c) => "  " + c + (c === "is_decision_maker" ? " INTEGER" : " TEXT")).join(",\n") +
-    "\n);\n\n";
-  out += "BEGIN TRANSACTION;\n";
-  for (const r of rows) {
-    const vals = cols.map((c) => (c === "is_decision_maker" ? (r[c] ? 1 : 0) : sqlStr(r[c])));
-    out += `INSERT INTO contacts (${cols.join(", ")}) VALUES (${vals.join(", ")});\n`;
-  }
-  out += "COMMIT;\n";
-  return out;
-}
-
 function download(filename, text, mime) {
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
@@ -449,119 +410,16 @@ async function exportData(format) {
   } else if (format === "sql") {
     download(`startia-linkedin-${stamp}.sql`, toSql(results), "application/sql;charset=utf-8");
   } else {
-    const payload = { exported_at: new Date().toISOString(), summary: stats, records: results };
-    download(`startia-linkedin-${stamp}.json`, JSON.stringify(payload, null, 2), "application/json");
+    download(`startia-linkedin-${stamp}.json`, toJson(results, stats), "application/json");
   }
 }
 
 // ---- Restore (import) ---------------------------------------------------
 
-const LABEL_TO_KEY = Object.fromEntries(CSV_COLUMNS.map(([key, label]) => [label, key]));
-
 function setRestore(msg, kind) {
   els.restoreStatus.textContent = msg;
   els.restoreStatus.classList.remove("ok", "warn");
   if (kind) els.restoreStatus.classList.add(kind);
-}
-
-function parseJsonRecords(text) {
-  const j = JSON.parse(text);
-  const arr = Array.isArray(j) ? j : j.records || [];
-  return arr.filter((r) => r && typeof r === "object");
-}
-
-// Minimal RFC-4180 CSV parser (handles quotes, embedded commas/newlines).
-function parseCsv(text) {
-  const rows = [];
-  let row = [];
-  let field = "";
-  let inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (inQuotes) {
-      if (c === '"') {
-        if (text[i + 1] === '"') { field += '"'; i++; } else inQuotes = false;
-      } else field += c;
-      continue;
-    }
-    if (c === '"') inQuotes = true;
-    else if (c === ",") { row.push(field); field = ""; }
-    else if (c === "\r") { /* skip */ }
-    else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
-    else field += c;
-  }
-  if (field !== "" || row.length) { row.push(field); rows.push(row); }
-  return rows;
-}
-
-function parseCsvRecords(text) {
-  const rows = parseCsv(text);
-  if (rows.length < 2) return [];
-  const keys = rows[0].map((h) => LABEL_TO_KEY[h.trim()] || null);
-  return rows
-    .slice(1)
-    .filter((cells) => cells.some((c) => c !== ""))
-    .map((cells) => {
-      const rec = {};
-      cells.forEach((c, i) => {
-        if (keys[i]) rec[keys[i]] = c;
-      });
-      if ("is_decision_maker" in rec) rec.is_decision_maker = /^(true|1|yes)$/i.test(rec.is_decision_maker);
-      return rec;
-    });
-}
-
-// Parse a `.sql` dump produced by Export SQL: reads every
-// `INSERT INTO contacts (cols) VALUES (vals);` statement back into records.
-// Handles '' -escaped strings, NULL, numbers, and values spanning newlines.
-function parseSqlValues(text, start) {
-  let i = start;
-  while (i < text.length && /\s/.test(text[i])) i++;
-  if (text[i] !== "(") return null;
-  i++;
-  const values = [];
-  while (i < text.length) {
-    while (i < text.length && /[\s,]/.test(text[i])) i++;
-    if (text[i] === ")") return { values, end: i + 1 };
-    if (text[i] === "'") {
-      i++;
-      let s = "";
-      while (i < text.length) {
-        if (text[i] === "'") {
-          if (text[i + 1] === "'") { s += "'"; i += 2; continue; }
-          i++;
-          break;
-        }
-        s += text[i++];
-      }
-      values.push(s);
-    } else {
-      let tok = "";
-      while (i < text.length && !/[,)]/.test(text[i])) tok += text[i++];
-      tok = tok.trim();
-      values.push(/^null$/i.test(tok) ? "" : tok);
-    }
-  }
-  return null; // unterminated
-}
-
-function parseSqlRecords(text) {
-  const records = [];
-  const re = /INSERT\s+INTO\s+contacts\s*\(([^)]*)\)\s*VALUES\s*/gi;
-  let m;
-  while ((m = re.exec(text))) {
-    const cols = m[1].split(",").map((s) => s.trim().replace(/^["'`]|["'`]$/g, ""));
-    const parsed = parseSqlValues(text, re.lastIndex);
-    if (!parsed || parsed.values.length !== cols.length) continue;
-    re.lastIndex = parsed.end;
-    const rec = {};
-    cols.forEach((c, idx) => {
-      rec[c] = parsed.values[idx];
-    });
-    if ("is_decision_maker" in rec) rec.is_decision_maker = /^(1|true|yes)$/i.test(String(rec.is_decision_maker));
-    records.push(rec);
-  }
-  return records;
 }
 
 async function doRestore(records, replace) {
@@ -649,6 +507,9 @@ els.json.addEventListener("click", () => exportData("json"));
 els.sql.addEventListener("click", () => exportData("sql"));
 els.restore.addEventListener("click", () => els.restoreFile.click());
 els.restoreFile.addEventListener("change", onRestoreFile);
+els.marketing.addEventListener("click", () =>
+  chrome.tabs.create({ url: chrome.runtime.getURL("app.html") })
+);
 els.reset.addEventListener("click", async () => {
   if (
     !confirm(

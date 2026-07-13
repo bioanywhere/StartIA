@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StartIA — LinkedIn Marketing</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <!-- Left navigation -->
+      <aside class="sidebar">
+        <div class="brand">StartIA</div>
+        <nav>
+          <button class="nav-item" data-view="extraction">📥 Extraction</button>
+          <button class="nav-item active" data-view="marketing">🔗 LinkedIn Marketing</button>
+        </nav>
+        <div class="sidebar-foot" id="ds-count">—</div>
+      </aside>
+
+      <main class="content">
+        <!-- Extraction view -->
+        <section id="view-extraction" class="view hidden">
+          <h1>Extraction</h1>
+          <p class="muted">Run and manage extraction from the toolbar popup. Below is the current dataset.</p>
+          <div class="cards" id="ds-cards"></div>
+          <div class="row">
+            <button id="x-csv">⬇ Export CSV</button>
+            <button id="x-json">⬇ Export JSON</button>
+            <button id="x-sql">⬇ Export SQL</button>
+          </div>
+        </section>
+
+        <!-- LinkedIn Marketing view -->
+        <section id="view-marketing" class="view">
+          <div class="head-row">
+            <h1>LinkedIn Marketing</h1>
+            <button id="m-refresh" class="ghost">↻ Refresh</button>
+          </div>
+
+          <div class="toolbar">
+            <input id="m-search" type="search" placeholder="Search name, company, title…" />
+            <select id="m-category"><option value="all">All categories</option></select>
+            <select id="m-status">
+              <option value="all">All outreach</option>
+              <option value="none">Not contacted</option>
+              <option value="queued">Queued</option>
+              <option value="connect_sent">Connect sent</option>
+              <option value="message_sent">Message sent</option>
+              <option value="inmail_sent">InMail sent</option>
+              <option value="replied">Replied</option>
+              <option value="skipped">Skipped</option>
+            </select>
+            <select id="m-enriched">
+              <option value="all">Any enrichment</option>
+              <option value="yes">Enriched</option>
+              <option value="no">Not enriched</option>
+            </select>
+            <span class="grow"></span>
+            <span id="m-count" class="muted"></span>
+          </div>
+
+          <div class="table-wrap">
+            <table id="m-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  <th>Name</th>
+                  <th>Title / Headline</th>
+                  <th>Company</th>
+                  <th>Location</th>
+                  <th>Category</th>
+                  <th>Enriched</th>
+                  <th>Outreach</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="m-body"></tbody>
+            </table>
+          </div>
+
+          <!-- Templates -->
+          <div class="templates">
+            <div class="tpl-head">
+              <h2>Message templates</h2>
+              <div>
+                <select id="tpl-select"></select>
+                <button id="tpl-new" class="mini">New</button>
+                <button id="tpl-del" class="mini ghost">Delete</button>
+              </div>
+            </div>
+            <input id="tpl-name" placeholder="Template name" />
+            <select id="tpl-channel">
+              <option value="connect">Connection request (note)</option>
+              <option value="message">Direct message</option>
+              <option value="inmail">InMail</option>
+            </select>
+            <textarea id="tpl-body" rows="4" placeholder="Hi {first_name}, I saw your work at {company} as {title}…"></textarea>
+            <div class="tpl-foot">
+              <span class="muted">Variables: {first_name} {name} {company} {title} {location}</span>
+              <button id="tpl-save" class="primary mini">Save template</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- Confirmation modal -->
+    <div id="modal" class="modal hidden">
+      <div class="modal-box">
+        <h3 id="modal-title">Confirm</h3>
+        <div id="modal-warn" class="warn hidden"></div>
+        <div id="modal-body"></div>
+        <textarea id="modal-message" rows="5"></textarea>
+        <div class="modal-actions">
+          <button id="modal-cancel" class="ghost">Cancel</button>
+          <button id="modal-confirm" class="primary">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="app.js" type="module"></script>
+  </body>
+</html>

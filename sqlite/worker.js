@@ -31,6 +31,27 @@ const COLS = [
   "extracted_at",
 ];
 
+// Enrichment + outreach columns added by the LinkedIn Marketing feature.
+// Nested fields (experience/education/skills) are stored as JSON TEXT.
+const EXTRA_COLS = [
+  "enrich_status",
+  "enriched_at",
+  "enrich_headline",
+  "enrich_about",
+  "enrich_location",
+  "enrich_current_company",
+  "enrich_current_title",
+  "enrich_connections",
+  "enrich_photo_url",
+  "experience",
+  "education",
+  "skills",
+  "outreach_status",
+  "outreach_channel",
+  "outreach_at",
+  "outreach_note",
+];
+
 let sqlite3 = null;
 let db = null;
 let readyPromise = null;
@@ -61,6 +82,23 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_contacts_org ON contacts(org_id);
     CREATE INDEX IF NOT EXISTS idx_contacts_url ON contacts(contact_linkedin_url);
   `);
+  // Add enrichment/outreach columns to a table that may predate them.
+  const existingCols = [];
+  db.exec({
+    sql: "SELECT name FROM pragma_table_info('contacts')",
+    rowMode: "array",
+    callback: (r) => existingCols.push(r[0]),
+  });
+  const existing = new Set(existingCols);
+  for (const c of EXTRA_COLS) {
+    if (!existing.has(c)) {
+      try {
+        db.exec(`ALTER TABLE contacts ADD COLUMN ${c} TEXT`);
+      } catch {
+        /* already present / race — ignore */
+      }
+    }
+  }
   return true;
 }
 
@@ -120,6 +158,17 @@ function clearAll() {
   return true;
 }
 
+// Update the given columns on every row whose contact_linkedin_url matches.
+function updateByUrl(url, fields) {
+  if (!url || !fields) return 0;
+  const cols = Object.keys(fields).filter((c) => EXTRA_COLS.includes(c));
+  if (!cols.length) return 0;
+  const sql =
+    "UPDATE contacts SET " + cols.map((c) => c + " = ?").join(", ") + " WHERE contact_linkedin_url = ?";
+  db.exec({ sql, bind: [...cols.map((c) => (fields[c] === undefined ? null : fields[c])), url] });
+  return cols.length;
+}
+
 function countRows() {
   return db.selectValue("SELECT COUNT(*) FROM contacts");
 }
@@ -140,6 +189,8 @@ async function handle(op, payload) {
       return { orgs: deleteByOrgIds(payload.ids) };
     case "clear":
       return { cleared: clearAll() };
+    case "updateByUrl":
+      return { updated: updateByUrl(payload.url, payload.fields) };
     case "count":
       return { count: countRows() };
     case "export": {
