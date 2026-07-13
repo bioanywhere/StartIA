@@ -41,7 +41,6 @@ const els = {
   filterIssue: $("filter-issue"),
   selAllBtn: $("sel-all-btn"),
   selNoneBtn: $("sel-none-btn"),
-  selShownBtn: $("sel-shown-btn"),
   selCount: $("sel-count"),
   planList: $("plan-list"),
 
@@ -629,15 +628,12 @@ els.confirm.addEventListener("click", () => {
 });
 els.cancel.addEventListener("click", () => send("CANCEL_PLAN"));
 els.selAllBtn.addEventListener("click", () => {
-  selectedIds = new Set(planItems.map((i) => i.id));
+  // Select everything in the CURRENT filtered view (not the whole dataset).
+  selectedIds = new Set(visibleItems().map((i) => i.id));
   renderSelect();
 });
 els.selNoneBtn.addEventListener("click", () => {
   selectedIds = new Set();
-  renderSelect();
-});
-els.selShownBtn.addEventListener("click", () => {
-  selectedIds = new Set(visibleItems().map((i) => i.id));
   renderSelect();
 });
 els.pause.addEventListener("click", () => send("PAUSE"));
