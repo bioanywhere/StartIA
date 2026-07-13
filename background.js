@@ -709,10 +709,12 @@ async function processIndividual(org, cls) {
   const data = await scrapeInTab(canonical, extractIndividualProfile, []);
 
   if (data && data.authWall) {
-    log("warn", `"${org.name}": profile behind auth wall (login to LinkedIn to capture more).`);
+    log("warn", `"${org.name}": profile not readable (LinkedIn login/auth wall). Saving the profile URL anyway.`);
   }
 
-  const contactUrl = normalizeUrl(data?.url || canonical);
+  // Always save the canonical profile URL from StartIA — never the scraped
+  // tab's location (which may be a login/auth-wall redirect).
+  const contactUrl = normalizeUrl(canonical);
   if (isDuplicateContact(contactUrl)) {
     state.stats.duplicates++;
     log("info", `Duplicate contact skipped: ${contactUrl}`);
@@ -731,9 +733,12 @@ async function processIndividual(org, cls) {
     contact_location: data?.location || "",
     is_decision_maker: isDecisionMaker(title),
     status: data && data.ok ? "ok" : "partial",
-    error: data && data.ok ? "" : data?.authWall ? "auth_wall" : "name_not_found",
+    error: data && data.ok ? "" : data && data.authWall ? "auth_wall" : "name_not_found",
   });
-  log("success", `Saved contact: ${name || "(name unavailable)"}${title ? " — " + title : ""}`);
+  log(
+    "success",
+    `Saved contact: ${name || "(name unavailable — URL saved)"}${title ? " — " + title : ""} [${contactUrl}]`
+  );
 }
 
 async function processCompany(org, cls) {
