@@ -15,7 +15,9 @@
   "host_permissions": [
     "https://startia.com.co/*",
     "https://www.linkedin.com/*",
-    "https://linkedin.com/*"
+    "https://linkedin.com/*",
+    "https://api.apollo.io/*",
+    "https://api.contactout.com/*"
   ],
   "background": {
     "service_worker": "background.js",

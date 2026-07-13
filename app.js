@@ -7,17 +7,48 @@ const send = (type, extra = {}) => chrome.runtime.sendMessage({ type, ...extra }
 
 // ---- Navigation -----------------------------------------------------------
 
-const views = { extraction: $("view-extraction"), marketing: $("view-marketing") };
+const views = {
+  extraction: $("view-extraction"),
+  marketing: $("view-marketing"),
+  settings: $("view-settings"),
+};
 document.querySelectorAll(".nav-item").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".nav-item").forEach((b) => b.classList.toggle("active", b === btn));
     const v = btn.dataset.view;
-    views.extraction.classList.toggle("hidden", v !== "extraction");
-    views.marketing.classList.toggle("hidden", v !== "marketing");
+    for (const [name, el] of Object.entries(views)) el.classList.toggle("hidden", name !== v);
     if (v === "extraction") loadExtraction();
     if (v === "marketing") loadContacts();
+    if (v === "settings") loadSettings();
   });
 });
+
+// ---- Settings -------------------------------------------------------------
+
+let settings = { defaultProvider: "apollo" };
+async function loadSettings() {
+  const res = await send("GET_SETTINGS");
+  settings = (res && res.settings) || { defaultProvider: "apollo" };
+  $("set-apollo").value = settings.apolloKey || "";
+  $("set-contactout").value = settings.contactoutKey || "";
+  $("set-default").value = settings.defaultProvider || "apollo";
+  syncProviderPicker();
+}
+$("set-save").addEventListener("click", async () => {
+  settings = {
+    apolloKey: $("set-apollo").value.trim(),
+    contactoutKey: $("set-contactout").value.trim(),
+    defaultProvider: $("set-default").value,
+  };
+  await send("SET_SETTINGS", { settings });
+  $("set-status").textContent = "Saved.";
+  setTimeout(() => ($("set-status").textContent = ""), 2500);
+  syncProviderPicker();
+});
+function syncProviderPicker() {
+  const sel = $("m-provider");
+  if (sel && settings.defaultProvider) sel.value = settings.defaultProvider;
+}
 
 // ---- Extraction view ------------------------------------------------------
 
@@ -137,6 +168,8 @@ function rowEl(c, index) {
     <td>${esc(c.name || "—")}</td>
     <td title="${esc(c.headline || "")}">${esc(c.title || c.headline || "—")}</td>
     <td>${esc(c.current_company || c.org_name || "—")}</td>
+    <td class="cell-contact">${contactCell(c.emails, "mailto")}</td>
+    <td class="cell-contact">${contactCell(c.phones, "tel")}</td>
     <td>${esc(c.location || "—")}</td>
     <td>${esc(c.category || "—")}</td>
     <td>${enrichedBadge}</td>
@@ -151,6 +184,7 @@ function rowEl(c, index) {
   actions.append(
     btn("Open", "ghost", () => chrome.tabs.create({ url: c.url })),
     btn(c.enrich_status === "ok" ? "Re-enrich" : "Enrich", "ghost", () => enrich(c, tr)),
+    btn("☎ Contacts", "ghost", () => findContacts(c)),
     btn("Connect", "", () => openOutreachModal(c, "connect", null)),
     btn("Message", "", () => openOutreachModal(c, "message", null)),
     btn("InMail", "", () => openOutreachModal(c, "inmail", null))
@@ -252,6 +286,27 @@ $("bulk-enrich").addEventListener("click", async () => {
   toast(`Enrichment finished for ${list.length} contact(s).`);
 });
 
+$("bulk-contacts").addEventListener("click", async () => {
+  const list = selectedContacts();
+  if (!list.length) return;
+  const provider = currentProvider();
+  if (!confirm(`Look up contact info (email/phone) for ${list.length} person(s) via ${provider}? This uses your ${provider} API credits.`)) return;
+  let hits = 0;
+  let done = 0;
+  for (const c of list) {
+    toast(`Contacts ${++done}/${list.length}: ${c.name}…`);
+    const res = await send("ENRICH_CONTACT_INFO", { url: c.url, provider });
+    applyContactResult(c, res);
+    if (res && res.ok) hits++;
+    if (res && res.status === "no_key") {
+      toast(`No API key for ${provider} — add it in Settings.`);
+      break;
+    }
+    renderTable();
+  }
+  toast(`Contact lookup finished: ${hits}/${list.length} had results.`);
+});
+
 $("bulk-csv").addEventListener("click", () => exportSelected("csv"));
 $("bulk-json").addEventListener("click", () => exportSelected("json"));
 $("bulk-sql").addEventListener("click", () => exportSelected("sql"));
@@ -331,6 +386,44 @@ async function enrich(c, tr) {
     toast(`Could not enrich ${c.name}: ${(res && res.reason) || (res && res.error) || "failed"}`);
   }
   renderTable();
+}
+
+// ---- Contact-info enrichment (email / phone via provider) -----------------
+
+function currentProvider() {
+  return $("m-provider").value || settings.defaultProvider || "apollo";
+}
+
+function contactCell(arr, scheme) {
+  if (!Array.isArray(arr) || !arr.length) return '<span class="more">—</span>';
+  const first = arr[0].value;
+  const all = arr.map((x) => x.value).join(", ");
+  const more = arr.length > 1 ? ` <span class="more">+${arr.length - 1}</span>` : "";
+  return `<a href="${esc(scheme + ":" + first)}" title="${esc(all)}">${esc(first)}</a>${more}`;
+}
+
+function applyContactResult(c, res) {
+  if (res && res.enrichment) {
+    c.emails = res.enrichment.emails || [];
+    c.phones = res.enrichment.phones || [];
+    c.contact_provider = res.enrichment.contact_provider || "";
+    c.contact_status = res.enrichment.contact_status || "";
+  }
+}
+
+async function findContacts(c) {
+  const provider = currentProvider();
+  toast(`Looking up ${c.name} via ${provider}…`);
+  const res = await send("ENRICH_CONTACT_INFO", { url: c.url, provider });
+  applyContactResult(c, res);
+  renderTable();
+  if (res && res.ok) {
+    toast(`${c.name}: ${(c.emails || []).length} email(s), ${(c.phones || []).length} phone(s) via ${provider}.`);
+  } else if (res && res.status === "no_key") {
+    toast(`No API key for ${provider}. Add it in Settings.`);
+  } else {
+    toast(`${c.name}: no contacts found (${(res && (res.status || res.error)) || "failed"}).`);
+  }
 }
 
 // ---- Templates ------------------------------------------------------------
@@ -503,5 +596,6 @@ function esc(s) {
 
 // ---- Init -----------------------------------------------------------------
 
+loadSettings();
 loadTemplates();
 loadContacts();

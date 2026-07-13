@@ -14,6 +14,7 @@
         <nav>
           <button class="nav-item" data-view="extraction">📥 Extraction</button>
           <button class="nav-item active" data-view="marketing">🔗 LinkedIn Marketing</button>
+          <button class="nav-item" data-view="settings">⚙ Settings</button>
         </nav>
         <div class="sidebar-foot" id="ds-count">—</div>
       </aside>
@@ -28,6 +29,29 @@
             <button id="x-csv">⬇ Export CSV</button>
             <button id="x-json">⬇ Export JSON</button>
             <button id="x-sql">⬇ Export SQL</button>
+          </div>
+        </section>
+
+        <!-- Settings view -->
+        <section id="view-settings" class="view hidden">
+          <h1>Settings</h1>
+          <p class="muted">
+            API keys are stored locally in this browser only and used to look up email / phone by LinkedIn URL.
+            Lookups consume your provider credits.
+          </p>
+          <div class="settings-form">
+            <label>Apollo API key<input id="set-apollo" type="password" placeholder="Apollo API key" /></label>
+            <label>ContactOut API token<input id="set-contactout" type="password" placeholder="ContactOut API token" /></label>
+            <label>Default contact provider
+              <select id="set-default">
+                <option value="apollo">Apollo</option>
+                <option value="contactout">ContactOut</option>
+              </select>
+            </label>
+            <div class="row">
+              <button id="set-save" class="primary">Save settings</button>
+              <span id="set-status" class="muted"></span>
+            </div>
           </div>
         </section>
 
@@ -56,6 +80,10 @@
               <option value="yes">Enriched</option>
               <option value="no">Not enriched</option>
             </select>
+            <select id="m-provider" title="Provider for contact-info lookups">
+              <option value="apollo">Contacts via Apollo</option>
+              <option value="contactout">Contacts via ContactOut</option>
+            </select>
             <span class="grow"></span>
             <span id="m-count" class="muted"></span>
           </div>
@@ -63,6 +91,7 @@
           <div id="bulk-bar" class="bulk-bar hidden">
             <span id="bulk-count">0 selected</span>
             <button id="bulk-enrich" class="mini">✨ Enrich</button>
+            <button id="bulk-contacts" class="mini">☎ Find contacts</button>
             <button id="bulk-queue" class="mini">＋ Queue</button>
             <span class="sep">·</span>
             <select id="bulk-channel" class="mini">
@@ -88,6 +117,8 @@
                   <th>Name</th>
                   <th>Title / Headline</th>
                   <th>Company</th>
+                  <th>Email</th>
+                  <th>Phone</th>
                   <th>Location</th>
                   <th>Category</th>
                   <th>Enriched</th>

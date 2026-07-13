@@ -54,6 +54,7 @@ import {
   mirrorUpdateByUrl,
 } from "./lib/sqlite-bridge.js";
 import { mergeRecord } from "./lib/export.js";
+import { findContactInfo, providerKeyField } from "./lib/providers.js";
 
 // ---------------------------------------------------------------------------
 // Runtime state (in-memory) + guards
@@ -325,6 +326,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         } catch (e) {
           sendResponse({ ok: false, error: String(e.message || e) });
         }
+        break;
+
+      case "ENRICH_CONTACT_INFO":
+        try {
+          sendResponse(await enrichContactInfo(msg.url, msg.provider));
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e.message || e) });
+        }
+        break;
+
+      case "GET_SETTINGS": {
+        const obj = await chrome.storage.local.get("startia_settings");
+        sendResponse({ settings: obj.startia_settings || { defaultProvider: "apollo" } });
+        break;
+      }
+
+      case "SET_SETTINGS":
+        await chrome.storage.local.set({ startia_settings: msg.settings || {} });
+        sendResponse({ ok: true });
         break;
 
       case "SET_OUTREACH":
@@ -1025,6 +1045,11 @@ async function marketingContacts() {
         current_company: e.current_company || "",
         current_title: e.current_title || "",
         experience_count: Array.isArray(e.experience) ? e.experience.length : 0,
+        emails: Array.isArray(e.emails) ? e.emails : [],
+        phones: Array.isArray(e.phones) ? e.phones : [],
+        contact_provider: e.contact_provider || "",
+        contact_status: e.contact_status || "",
+        contact_history: Array.isArray(e.contact_history) ? e.contact_history : [],
         outreach_status: o.status || "none",
         outreach_channel: o.channel || "",
         outreach_at: o.at || "",
@@ -1070,6 +1095,72 @@ async function enrichContact(rawUrl) {
   await putEnrichment(rec);
   mirrorUpdateByUrl(url, sqlEnrichFields(rec)).catch(() => {});
   return { ok: true, enrichment: rec };
+}
+
+// Enrich a person's contact info (email/phone) via a provider API, merging the
+// results into the person-keyed enrichment record. Records which provider was
+// used, both as the latest provider and in a contact_history log.
+async function enrichContactInfo(rawUrl, providerId) {
+  const url = normalizeUrl(rawUrl || "");
+  if (!url) return { ok: false, error: "missing url" };
+  const settings = (await chrome.storage.local.get("startia_settings")).startia_settings || {};
+  const pid = providerId || settings.defaultProvider || "apollo";
+  const keyField = providerKeyField(pid);
+  const apiKey = keyField ? settings[keyField] : null;
+  if (!apiKey) {
+    return { ok: false, status: "no_key", error: `No API key set for ${pid}. Add it in Settings.` };
+  }
+
+  const result = await findContactInfo(pid, url, apiKey);
+  const existing = (await getEnrichment(url)) || { url };
+  const now = new Date().toISOString();
+  const history = Array.isArray(existing.contact_history) ? existing.contact_history.slice() : [];
+  history.push({
+    provider: pid,
+    at: now,
+    status: result.status,
+    emails: (result.emails || []).length,
+    phones: (result.phones || []).length,
+  });
+
+  const rec = {
+    ...existing,
+    url,
+    emails: mergeContacts(existing.emails, result.emails, pid),
+    phones: mergeContacts(existing.phones, result.phones, pid),
+    contact_provider: pid,
+    contact_fetched_at: now,
+    contact_status: result.status,
+    contact_history: history,
+  };
+  await putEnrichment(rec);
+  mirrorUpdateByUrl(url, sqlContactFields(rec)).catch(() => {});
+  return { ok: !!result.ok, status: result.status, error: result.error, enrichment: rec };
+}
+
+// Merge new email/phone objects into existing, de-duped by value, tagging each
+// new value with the provider that supplied it.
+function mergeContacts(existingArr, newArr, provider) {
+  const out = Array.isArray(existingArr) ? existingArr.slice() : [];
+  const seen = new Set(out.map((x) => x && x.value));
+  for (const x of newArr || []) {
+    if (x && x.value && !seen.has(x.value)) {
+      seen.add(x.value);
+      out.push({ ...x, source: provider });
+    }
+  }
+  return out;
+}
+
+function sqlContactFields(rec) {
+  return {
+    emails: JSON.stringify(rec.emails || []),
+    phones: JSON.stringify(rec.phones || []),
+    contact_provider: rec.contact_provider || "",
+    contact_fetched_at: rec.contact_fetched_at || "",
+    contact_status: rec.contact_status || "",
+    contact_history: JSON.stringify(rec.contact_history || []),
+  };
 }
 
 // Flatten enrichment into the SQLite contacts columns (arrays -> JSON strings).
