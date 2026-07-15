@@ -885,10 +885,13 @@ async function processCompany(org, cls) {
 // Tab management + injection
 // ---------------------------------------------------------------------------
 
-async function scrapeInTab(url, func, args) {
+async function scrapeInTab(url, func, args, opts = {}) {
   let tab;
   try {
-    tab = await chrome.tabs.create({ url, active: false });
+    // Some pages (LinkedIn profile bodies) only render when the tab is visible.
+    // `active:true` briefly focuses the tab so the full DOM renders before we
+    // scrape; the tab is closed immediately after.
+    tab = await chrome.tabs.create({ url, active: !!opts.active });
   } catch (e) {
     throw new Error("could not open tab: " + e.message);
   }
@@ -1068,7 +1071,9 @@ async function enrichContact(rawUrl) {
   if (!url || classifyLinkedin(url).type !== "individual") {
     return { ok: false, error: "not an individual profile URL" };
   }
-  const data = await scrapeInTab(url, extractProfileFull, []);
+  // Open the profile in the foreground so LinkedIn renders the full body
+  // (Experience/Education/Skills only render in a visible tab).
+  const data = await scrapeInTab(url, extractProfileFull, [], { active: true });
   if (!data || !data.ok) {
     const reason = (data && data.reason) || "name_not_found";
     const rec = { url, status: reason, enriched_at: new Date().toISOString() };
