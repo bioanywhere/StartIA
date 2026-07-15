@@ -907,12 +907,19 @@ async function scrapeInTab(url, func, args, opts = {}) {
   try {
     await waitForTabComplete(tab.id, DELAYS.linkedinTabLoad);
     await sleep(DELAYS.afterTabReady);
-    const [injection] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func,
-      args: args || [],
-    });
-    return injection ? injection.result : null;
+
+    // Inject the (synchronous) extractor. Optionally retry a few times while the
+    // page is still lazy-rendering, deciding via opts.retryUntil(result). Each
+    // executeScript is capped by a hard timeout so a wedged frame can never hang
+    // the loop (and thus never leaves the tab open).
+    const maxAttempts = opts.retryUntil ? opts.maxAttempts || 8 : 1;
+    let result = null;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      result = await runInjection(tab.id, func, args);
+      if (!opts.retryUntil || opts.retryUntil(result)) break;
+      await sleep(opts.retryDelay || 1200);
+    }
+    return result;
   } finally {
     try {
       await chrome.tabs.remove(tab.id);
@@ -920,6 +927,19 @@ async function scrapeInTab(url, func, args, opts = {}) {
       /* tab may already be gone */
     }
   }
+}
+
+// Run one executeScript with a hard timeout so it can never hang scrapeInTab.
+async function runInjection(tabId, func, args) {
+  const exec = chrome.scripting
+    .executeScript({ target: { tabId }, func, args: args || [] })
+    .then((r) => (r && r[0] ? r[0].result : null))
+    .catch((e) => {
+      console.warn("[scrapeInTab] injection failed:", (e && e.message) || e);
+      return null;
+    });
+  const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 15000));
+  return Promise.race([exec, timeout]);
 }
 
 function waitForTabComplete(tabId, timeoutMs) {
@@ -1081,8 +1101,19 @@ async function enrichContact(rawUrl) {
     return { ok: false, error: "not an individual profile URL" };
   }
   // Open the profile in the foreground so LinkedIn renders the full body
-  // (Experience/Education/Skills only render in a visible tab).
-  const data = await scrapeInTab(url, extractProfileFull, [], { active: true });
+  // (Experience/Education/Skills only render in a visible tab). Retry while the
+  // page is still lazy-rendering (name not yet present).
+  const data = await scrapeInTab(url, extractProfileFull, [], {
+    active: true,
+    maxAttempts: 8,
+    retryDelay: 1200,
+    // Stop on a definitive failure, or once we have a name AND some experience.
+    // Keep retrying while the name is missing or experience hasn't rendered yet
+    // (capped by maxAttempts so a genuinely empty profile still finishes).
+    retryUntil: (r) =>
+      !!(r && ((r.reason && r.reason !== "name_not_found") || (r.ok && (r.experience || []).length > 0))),
+  });
+  console.log("[enrich]", url, "->", data ? { ok: data.ok, reason: data.reason, exp: (data.experience || []).length } : "null");
   if (!data || !data.ok) {
     const reason = (data && data.reason) || "name_not_found";
     const rec = { url, status: reason, enriched_at: new Date().toISOString() };
