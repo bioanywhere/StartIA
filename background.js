@@ -916,6 +916,12 @@ async function scrapeInTab(url, func, args, opts = {}) {
     let result = null;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       result = await runInjection(tab.id, func, args);
+      if (opts.debug) {
+        console.log(
+          `[scrapeInTab] attempt ${attempt + 1}/${maxAttempts}`,
+          result ? { ok: result.ok, reason: result.reason, name: result.name, exp: (result.experience || []).length } : "null"
+        );
+      }
       if (!opts.retryUntil || opts.retryUntil(result)) break;
       await sleep(opts.retryDelay || 1200);
     }
@@ -1105,6 +1111,7 @@ async function enrichContact(rawUrl) {
   // page is still lazy-rendering (name not yet present).
   const data = await scrapeInTab(url, extractProfileFull, [], {
     active: true,
+    debug: true,
     maxAttempts: 8,
     retryDelay: 1200,
     // Stop on a definitive failure, or once we have a name AND some experience.
