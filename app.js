@@ -422,7 +422,7 @@ async function findContacts(c) {
   } else if (res && res.status === "no_key") {
     toast(`No API key for ${provider}. Add it in Settings.`);
   } else {
-    toast(`${c.name}: no contacts found (${(res && (res.status || res.error)) || "failed"}).`);
+    toast(`${c.name}: ${(res && res.error) || "no contacts found"}`);
   }
 }
 
