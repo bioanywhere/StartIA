@@ -915,6 +915,12 @@ async function scrapeInTab(url, func, args, opts = {}) {
     const maxAttempts = opts.retryUntil ? opts.maxAttempts || 8 : 1;
     let result = null;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Force lazy sections (Experience/Education/Skills) to mount by scrolling
+      // through the page in steps, then let them render before extracting.
+      if (opts.scroll) {
+        await runInjection(tab.id, scrollThroughPage, []);
+        await sleep(800);
+      }
       result = await runInjection(tab.id, func, args);
       if (opts.debug) {
         console.log(
@@ -933,6 +939,23 @@ async function scrapeInTab(url, func, args, opts = {}) {
       /* tab may already be gone */
     }
   }
+}
+
+// Injected: scroll through the page in steps to trigger lazy-mounted sections,
+// then return to the top. Synchronous (uses a fixed set of jumps) so it can't
+// hang the injection.
+function scrollThroughPage() {
+  try {
+    const h = document.body.scrollHeight;
+    for (let y = 0; y <= h; y += Math.max(400, Math.floor(window.innerHeight * 0.8))) {
+      window.scrollTo(0, y);
+    }
+    window.scrollTo(0, document.body.scrollHeight);
+    window.scrollTo(0, 0);
+  } catch {
+    /* ignore */
+  }
+  return true;
 }
 
 // Run one executeScript with a hard timeout so it can never hang scrapeInTab.
@@ -1112,8 +1135,9 @@ async function enrichContact(rawUrl) {
   const data = await scrapeInTab(url, extractProfileFull, [], {
     active: true,
     debug: true,
-    maxAttempts: 8,
-    retryDelay: 1200,
+    scroll: true,
+    maxAttempts: 10,
+    retryDelay: 1500,
     // Stop on a definitive failure, or once we have a name AND some experience.
     // Keep retrying while the name is missing or experience hasn't rendered yet
     // (capped by maxAttempts so a genuinely empty profile still finishes).
