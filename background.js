@@ -328,6 +328,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         break;
 
+      case "GET_PERSON": {
+        const u = normalizeUrl(msg.url || "");
+        sendResponse({
+          enrichment: (await getEnrichment(u)) || null,
+          outreach: (await getOutreach(u)) || null,
+        });
+        break;
+      }
+
       case "ENRICH_CONTACT_INFO":
         try {
           sendResponse(await enrichContactInfo(msg.url, msg.provider));

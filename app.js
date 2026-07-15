@@ -166,7 +166,7 @@ function rowEl(c, index) {
     <td class="sel"></td>
     <td><a href="${esc(c.url)}" target="_blank" rel="noopener">↗</a></td>
     <td>${esc(c.name || "—")}</td>
-    <td title="${esc(c.headline || "")}">${esc(c.title || c.headline || "—")}</td>
+    <td title="${esc(c.headline || "")}">${esc(c.current_title || c.title || c.headline || "—")}</td>
     <td>${esc(c.current_company || c.org_name || "—")}</td>
     <td class="cell-contact">${contactCell(c.emails, "mailto")}</td>
     <td class="cell-contact">${contactCell(c.phones, "tel")}</td>
@@ -182,6 +182,7 @@ function rowEl(c, index) {
   tr.querySelector("td.sel").appendChild(cb);
   const actions = tr.querySelector(".cell-actions");
   actions.append(
+    btn("👁 View", "ghost", () => openDetail(c)),
     btn("Open", "ghost", () => chrome.tabs.create({ url: c.url })),
     btn(c.enrich_status === "ok" ? "Re-enrich" : "Enrich", "ghost", () => enrich(c, tr)),
     btn("☎ Contacts", "ghost", () => findContacts(c)),
@@ -269,18 +270,8 @@ $("bulk-enrich").addEventListener("click", async () => {
   for (const c of list) {
     toast(`Enriching ${++done}/${list.length}: ${c.name}…`);
     const res = await send("ENRICH_CONTACT", { url: c.url });
-    if (res && res.ok) {
-      Object.assign(c, {
-        enrich_status: "ok",
-        headline: res.enrichment.headline,
-        current_company: res.enrichment.current_company,
-        current_title: res.enrichment.current_title,
-        location: res.enrichment.location || c.location,
-        experience_count: (res.enrichment.experience || []).length,
-      });
-    } else {
-      c.enrich_status = (res && res.reason) || "failed";
-    }
+    if (res && res.ok) applyEnrichResult(c, res.enrichment);
+    else c.enrich_status = (res && res.reason) || "failed";
     renderTable();
   }
   toast(`Enrichment finished for ${list.length} contact(s).`);
@@ -372,20 +363,34 @@ async function enrich(c, tr) {
   toast(`Enriching ${c.name}…`);
   const res = await send("ENRICH_CONTACT", { url: c.url });
   if (res && res.ok) {
-    Object.assign(c, {
-      enrich_status: "ok",
-      headline: res.enrichment.headline,
-      current_company: res.enrichment.current_company,
-      current_title: res.enrichment.current_title,
-      location: res.enrichment.location || c.location,
-      experience_count: (res.enrichment.experience || []).length,
-    });
+    applyEnrichResult(c, res.enrichment);
     toast(`Enriched ${c.name} — ${c.experience_count} experience entries.`);
   } else {
     c.enrich_status = (res && res.reason) || "failed";
     toast(`Could not enrich ${c.name}: ${(res && res.reason) || (res && res.error) || "failed"}`);
   }
   renderTable();
+  if (detailUrl === c.url) openDetail(c); // refresh an open detail panel
+}
+
+// Fold a full enrichment record into the contact row shown in the table.
+function applyEnrichResult(c, e) {
+  if (!e) return;
+  Object.assign(c, {
+    enrich_status: e.status || "ok",
+    name: e.name || c.name,
+    headline: e.headline || c.headline,
+    about: e.about || "",
+    current_company: e.current_company || c.current_company,
+    current_title: e.current_title || c.current_title,
+    location: e.location || c.location,
+    photo_url: e.photo_url || "",
+    connections: e.connections || "",
+    experience: e.experience || [],
+    education: e.education || [],
+    skills: e.skills || [],
+    experience_count: (e.experience || []).length,
+  });
 }
 
 // ---- Contact-info enrichment (email / phone via provider) -----------------
@@ -417,6 +422,7 @@ async function findContacts(c) {
   const res = await send("ENRICH_CONTACT_INFO", { url: c.url, provider });
   applyContactResult(c, res);
   renderTable();
+  if (detailUrl === c.url) openDetail(c);
   if (res && res.ok) {
     toast(`${c.name}: ${(c.emails || []).length} email(s), ${(c.phones || []).length} phone(s) via ${provider}.`);
   } else if (res && res.status === "no_key") {
@@ -424,6 +430,76 @@ async function findContacts(c) {
   } else {
     toast(`${c.name}: ${(res && res.error) || "no contacts found"}`);
   }
+}
+
+// ---- Detail panel (shows everything gathered for a person) ----------------
+
+let detailUrl = null;
+$("detail-close").addEventListener("click", () => {
+  $("detail-modal").classList.add("hidden");
+  detailUrl = null;
+});
+
+async function openDetail(c) {
+  detailUrl = c.url;
+  $("detail-title").textContent = c.name || "Contact";
+  $("detail-body").innerHTML = '<p class="detail-empty">Loading…</p>';
+  $("detail-modal").classList.remove("hidden");
+  const res = await send("GET_PERSON", { url: c.url });
+  const e = (res && res.enrichment) || null;
+  const o = (res && res.outreach) || null;
+  renderDetail(c, e, o);
+}
+
+function renderDetail(c, e, o) {
+  e = e || {};
+  const emails = e.emails || c.emails || [];
+  const phones = e.phones || c.phones || [];
+  const exp = e.experience || [];
+  const edu = e.education || [];
+  const skills = e.skills || [];
+  const hist = e.contact_history || [];
+  const linkList = (arr, scheme) =>
+    arr.length
+      ? `<div class="detail-links">${arr
+          .map((x) => `<a href="${esc(scheme + ":" + x.value)}">${esc(x.value)}${x.source ? ` — ${esc(x.source)}` : ""}${x.type ? ` (${esc(x.type)})` : ""}</a>`)
+          .join("")}</div>`
+      : '<span class="detail-empty">none</span>';
+  const items = (arr, render) =>
+    arr.length ? arr.map(render).join("") : '<span class="detail-empty">none captured</span>';
+
+  $("detail-body").innerHTML = `
+    <section>
+      <div class="kv"><b>Profile</b><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.url)}</a></div>
+      ${e.headline || c.headline ? `<div class="kv"><b>Headline</b>${esc(e.headline || c.headline)}</div>` : ""}
+      <div class="kv"><b>Current</b>${esc(e.current_title || c.current_title || "—")} @ ${esc(e.current_company || c.current_company || "—")}</div>
+      <div class="kv"><b>Location</b>${esc(e.location || c.location || "—")}</div>
+      ${e.connections ? `<div class="kv"><b>Network</b>${esc(e.connections)}</div>` : ""}
+    </section>
+    <section>
+      <h4>Emails</h4>${linkList(emails, "mailto")}
+      <h4 style="margin-top:10px">Phones</h4>${linkList(phones, "tel")}
+    </section>
+    ${e.about ? `<section><h4>About</h4><div>${esc(e.about)}</div></section>` : ""}
+    <section>
+      <h4>Experience (${exp.length})</h4>
+      ${items(exp, (x) => `<div class="detail-item"><div class="t">${esc(x.title || "")}${x.company ? " · " + esc(x.company) : ""}</div><div class="s">${esc([x.date_range, x.location, x.employment_type].filter(Boolean).join(" · "))}</div></div>`)}
+    </section>
+    <section>
+      <h4>Education (${edu.length})</h4>
+      ${items(edu, (x) => `<div class="detail-item"><div class="t">${esc(x.school || "")}</div><div class="s">${esc([x.degree, x.field, x.date_range].filter(Boolean).join(" · "))}</div></div>`)}
+    </section>
+    <section>
+      <h4>Skills (${skills.length})</h4>
+      ${skills.length ? `<div class="chips">${skills.map((s) => `<span class="chip-sm">${esc(typeof s === "string" ? s : s.name || "")}</span>`).join("")}</div>` : '<span class="detail-empty">none captured</span>'}
+    </section>
+    <section>
+      <h4>Enrichment</h4>
+      <div class="kv"><b>Profile enriched</b>${esc(e.enriched_at || "—")}</div>
+      <div class="kv"><b>Contact provider</b>${esc(e.contact_provider || "—")}${e.contact_status ? ` (${esc(e.contact_status)})` : ""}</div>
+      <div class="kv"><b>Outreach</b>${esc(o && o.status ? o.status : "none")}${o && o.at ? " · " + esc(new Date(o.at).toLocaleString()) : ""}</div>
+      ${hist.length ? `<h4 style="margin-top:8px">Lookup history</h4>${hist.map((h) => `<div class="s">${esc(h.provider)} · ${esc(h.at)} · ${esc(h.status)} · ${h.emails || 0}✉ ${h.phones || 0}☎</div>`).join("")}` : ""}
+    </section>`;
 }
 
 // ---- Templates ------------------------------------------------------------
