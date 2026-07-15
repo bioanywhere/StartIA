@@ -156,6 +156,7 @@ tbody tr:hover { background: var(--panel); }
 .chip-sm { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 2px 9px; font-size: 12px; }
 .detail-links a { color: #93c5fd; display: block; }
 .detail-empty { color: var(--muted); font-style: italic; }
+.detail-debug { background: #0b0f1a; border: 1px solid var(--border); border-radius: 6px; padding: 8px; font-size: 11px; overflow: auto; max-height: 200px; white-space: pre-wrap; }
 
 .settings-form {
   display: flex;

@@ -362,6 +362,8 @@ $("m-refresh").addEventListener("click", loadContacts);
 async function enrich(c, tr) {
   toast(`Enriching ${c.name}…`);
   const res = await send("ENRICH_CONTACT", { url: c.url });
+  console.log("[enrich result]", c.url, res);
+  c._debug = res && res.debug;
   if (res && res.ok) {
     applyEnrichResult(c, res.enrichment);
     toast(`Enriched ${c.name} — ${c.experience_count} experience entries.`);
@@ -370,7 +372,7 @@ async function enrich(c, tr) {
     toast(`Could not enrich ${c.name}: ${(res && res.reason) || (res && res.error) || "failed"}`);
   }
   renderTable();
-  if (detailUrl === c.url) openDetail(c); // refresh an open detail panel
+  openDetail(c); // show what was captured (incl. diagnostics) for a single enrich
 }
 
 // Fold a full enrichment record into the contact row shown in the table.
@@ -499,7 +501,12 @@ function renderDetail(c, e, o) {
       <div class="kv"><b>Contact provider</b>${esc(e.contact_provider || "—")}${e.contact_status ? ` (${esc(e.contact_status)})` : ""}</div>
       <div class="kv"><b>Outreach</b>${esc(o && o.status ? o.status : "none")}${o && o.at ? " · " + esc(new Date(o.at).toLocaleString()) : ""}</div>
       ${hist.length ? `<h4 style="margin-top:8px">Lookup history</h4>${hist.map((h) => `<div class="s">${esc(h.provider)} · ${esc(h.at)} · ${esc(h.status)} · ${h.emails || 0}✉ ${h.phones || 0}☎</div>`).join("")}` : ""}
-    </section>`;
+    </section>
+    ${
+      c._debug
+        ? `<section><h4>Scrape diagnostics</h4><pre class="detail-debug">${esc(JSON.stringify(c._debug, null, 2))}</pre></section>`
+        : ""
+    }`;
 }
 
 // ---- Templates ------------------------------------------------------------

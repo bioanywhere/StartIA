@@ -1120,13 +1120,14 @@ async function enrichContact(rawUrl) {
     retryUntil: (r) =>
       !!(r && ((r.reason && r.reason !== "name_not_found") || (r.ok && (r.experience || []).length > 0))),
   });
-  console.log("[enrich]", url, "->", data ? { ok: data.ok, reason: data.reason, exp: (data.experience || []).length } : "null");
+  const debug = (data && data._debug) || null;
+  console.log("[enrich]", url, "->", data ? { ok: data.ok, reason: data.reason, exp: (data.experience || []).length, debug } : "null");
   if (!data || !data.ok) {
     const reason = (data && data.reason) || "name_not_found";
     const rec = { url, status: reason, enriched_at: new Date().toISOString() };
     await putEnrichment(rec);
     mirrorUpdateByUrl(url, sqlEnrichFields(rec)).catch(() => {});
-    return { ok: false, reason, enrichment: rec };
+    return { ok: false, reason, enrichment: rec, debug };
   }
   const rec = {
     url,
@@ -1146,7 +1147,7 @@ async function enrichContact(rawUrl) {
   };
   await putEnrichment(rec);
   mirrorUpdateByUrl(url, sqlEnrichFields(rec)).catch(() => {});
-  return { ok: true, enrichment: rec };
+  return { ok: true, enrichment: rec, debug };
 }
 
 // Enrich a person's contact info (email/phone) via a provider API, merging the
